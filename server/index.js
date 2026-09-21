@@ -55,8 +55,21 @@ const majorFootballLeagues = {
 }
 const sportProviders = {
   FUTBOL: { host: 'v3.football.api-sports.io', path: 'fixtures', leagues: majorFootballLeagues },
-  BALONCESTO: { host: 'v1.basketball.api-sports.io', path: 'games', leagues: { nba: { id: 12, name: 'NBA', oddsSportKey: 'basketball_nba' } } },
-  BEISBOL: { host: 'v1.baseball.api-sports.io', path: 'games', leagues: { mlb: { id: 1, name: 'MLB', oddsSportKey: 'baseball_mlb' } } },
+  BALONCESTO: { host: 'v1.basketball.api-sports.io', path: 'games', leagues: {
+    nba: { id: 12, name: 'NBA', oddsSportKey: 'basketball_nba' },
+    wnba: { id: 13, name: 'WNBA', oddsSportKey: 'basketball_wnba' },
+    euroleague: { id: 120, name: 'EuroLeague', oddsSportKey: 'basketball_euroleague' },
+    espana_acb: { id: 117, name: 'Liga Endesa (Espana)', oddsSportKey: 'basketball_spain_liga_acb' },
+    italia_serie_a: { id: 95, name: 'Lega Basket Serie A (Italia)', oddsSportKey: 'basketball_italy_lega_a' },
+    alemania_bbl: { id: 98, name: 'Basketball Bundesliga (Alemania)', oddsSportKey: 'basketball_germany_bbl' },
+    francia_lnb: { id: 114, name: 'LNB Pro A (Francia)', oddsSportKey: 'basketball_france_lnb' },
+    turquia_bsl: { id: 116, name: 'BSL (Turquia)', oddsSportKey: 'basketball_turkey_bsl' },
+  } },
+  BEISBOL: { host: 'v1.baseball.api-sports.io', path: 'games', leagues: {
+    mlb: { id: 1, name: 'MLB (Estados Unidos)', oddsSportKey: 'baseball_mlb' },
+    npb: { id: 2, name: 'NPB (Japon)', oddsSportKey: 'baseball_japan_npb' },
+    kbo: { id: 3, name: 'KBO (Corea del Sur)', oddsSportKey: 'baseball_korea_kbo' },
+  } },
   VOLEIBOL: { host: 'v1.volleyball.api-sports.io', path: 'games', leagues: { nations_league: { id: 23, name: 'Nations League', oddsSportKey: 'volleyball' } } },
 }
 

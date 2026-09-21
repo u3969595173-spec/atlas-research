@@ -11,8 +11,8 @@ type FootballFixture = { id: number; home: string; away: string; time: string }
 
 const leagueOptions: Record<string, { value: string; label: string }[]> = {
   FUTBOL: [{ value: 'premier_league', label: 'Premier League' }, { value: 'la_liga', label: 'LaLiga' }, { value: 'serie_a', label: 'Serie A' }, { value: 'bundesliga', label: 'Bundesliga' }, { value: 'ligue_1', label: 'Ligue 1' }],
-  BALONCESTO: [{ value: 'nba', label: 'NBA' }],
-  BEISBOL: [{ value: 'mlb', label: 'MLB' }],
+  BALONCESTO: [{ value: 'nba', label: 'NBA' }, { value: 'wnba', label: 'WNBA' }, { value: 'euroleague', label: 'EuroLeague' }, { value: 'espana_acb', label: 'Liga Endesa (Espana)' }, { value: 'italia_serie_a', label: 'Lega Basket Serie A (Italia)' }, { value: 'alemania_bbl', label: 'Basketball Bundesliga (Alemania)' }, { value: 'francia_lnb', label: 'LNB Pro A (Francia)' }, { value: 'turquia_bsl', label: 'BSL (Turquia)' }],
+  BEISBOL: [{ value: 'mlb', label: 'MLB (Estados Unidos)' }, { value: 'npb', label: 'NPB (Japon)' }, { value: 'kbo', label: 'KBO (Corea del Sur)' }],
   VOLEIBOL: [{ value: 'nations_league', label: 'Nations League' }],
 }
 
