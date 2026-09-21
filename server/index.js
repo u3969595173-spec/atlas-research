@@ -42,6 +42,37 @@ app.get('/api/providers/status', (_request, response) => {
     note: 'Las claves no se exponen; solo se informa si están configuradas.',
   })
 })
+const normalizeName = (value) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '')
+const defaultOddsSport = { FUTBOL: 'soccer_spain_la_liga', BALONCESTO: 'basketball_nba', BEISBOL: 'baseball_mlb' }
+
+app.post('/api/workspaces/:workspaceId/matches/:matchId/analysis', async (request, response) => {
+  await ensureWorkspace(request.params.workspaceId)
+  if (!process.env.ODDS_API_KEY) return response.status(503).json({ error: 'The Odds API no está configurada.' })
+  const matchResult = await pool.query('SELECT id, sport, event, players FROM matches WHERE id = $1 AND workspace_id = $2', [request.params.matchId, request.params.workspaceId])
+  if (!matchResult.rows.length) return response.status(404).json({ error: 'Partido no encontrado.' })
+  const match = matchResult.rows[0]
+  const sportKey = request.body.sportKey || defaultOddsSport[match.sport]
+  if (!sportKey) return response.status(400).json({ error: 'Indica el identificador de competición de The Odds API para este deporte.' })
+  const url = new URL(`https://api.the-odds-api.com/v4/sports/${sportKey}/odds/`)
+  url.search = new URLSearchParams({ apiKey: process.env.ODDS_API_KEY, regions: 'eu', markets: 'h2h', oddsFormat: 'decimal' }).toString()
+  const oddsResponse = await fetch(url)
+  if (!oddsResponse.ok) return response.status(oddsResponse.status).json({ error: 'No se pudieron consultar las cuotas del proveedor.' })
+  const events = await oddsResponse.json()
+  const [first, second] = match.players.split(/\s+vs\.?\s+/i).map(normalizeName)
+  const event = events.find((item) => {
+    const home = normalizeName(item.home_team)
+    const away = normalizeName(item.away_team)
+    return (home === first && away === second) || (home === second && away === first)
+  })
+  if (!event) return response.status(404).json({ error: 'No se encontró una cuota verificable para este partido en la competición indicada.', source: { provider: 'The Odds API', sportKey } })
+  const books = event.bookmakers.flatMap((bookmaker) => bookmaker.markets.filter((market) => market.key === 'h2h').map((market) => ({ house: bookmaker.title, updatedAt: market.last_update, outcomes: market.outcomes.map((outcome) => ({ participant: outcome.name, odds: outcome.price })) })))
+  response.json({
+    source: { provider: 'The Odds API', sportKey, retrievedAt: new Date().toISOString(), requestsRemaining: oddsResponse.headers.get('x-requests-remaining') },
+    event: { home: event.home_team, away: event.away_team, commenceTime: event.commence_time },
+    books,
+    verdict: books.length ? 'DATOS REALES DISPONIBLES — REQUIERE REVISIÓN' : 'NO BET — SIN CUOTAS VERIFICABLES',
+  })
+})
 app.get('/api/workspaces/:workspaceId', async (request, response) => {
   const workspace = await ensureWorkspace(request.params.workspaceId)
   const matches = await pool.query('SELECT id, sport, event, match_time AS time, players, ranking, odds::float, classification, reason FROM matches WHERE workspace_id = $1 ORDER BY id', [request.params.workspaceId])
