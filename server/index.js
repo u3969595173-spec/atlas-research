@@ -55,7 +55,7 @@ app.put('/api/workspaces/:workspaceId/selections', async (request, response) => 
   const workspace = await ensureWorkspace(request.params.workspaceId)
   const selected = [...new Set(request.body.selected ?? [])].map(Number)
   if (workspace.analysis_closed) return response.status(409).json({ error: 'El análisis está cerrado.' })
-  if (selected.length > 3) return response.status(400).json({ error: 'Máximo de tres selecciones.' })
+  if (selected.length > 5) return response.status(400).json({ error: 'Máximo de cinco candidatos.' })
   const valid = await pool.query('SELECT id FROM matches WHERE workspace_id = $1 AND id = ANY($2::bigint[])', [request.params.workspaceId, selected])
   if (valid.rows.length !== selected.length) return response.status(400).json({ error: 'Selección no válida.' })
   await pool.query('DELETE FROM selections WHERE workspace_id = $1', [request.params.workspaceId])
