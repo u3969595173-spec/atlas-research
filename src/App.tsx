@@ -37,10 +37,11 @@ function App() {
       if (!response.ok) throw new Error('No se pudo cargar la lista')
       return response.json()
     }).then((data) => {
-      setStoredMatches(data.matches)
-      setSelected(data.selected)
+      const cloudMatches = data.matches.map((match: Match) => ({ ...match, id: Number(match.id) }))
+      setStoredMatches(cloudMatches)
+      setSelected(data.selected.map(Number))
       setAnalysisClosed(data.analysisClosed)
-      if (data.matches.length) setActiveMatchId(data.matches[0].id)
+      if (cloudMatches.length) setActiveMatchId(cloudMatches[0].id)
     }).catch(() => setSyncError('No se pudo conectar con la nube. Revisa VITE_API_URL.'))
   }, [apiUrl])
   const toggleSelection = (id: number) => {

@@ -36,7 +36,7 @@ app.get('/api/workspaces/:workspaceId', async (request, response) => {
   const workspace = await ensureWorkspace(request.params.workspaceId)
   const matches = await pool.query('SELECT id, sport, event, match_time AS time, players, ranking, odds::float, classification, reason FROM matches WHERE workspace_id = $1 ORDER BY id', [request.params.workspaceId])
   const selections = await pool.query('SELECT match_id FROM selections WHERE workspace_id = $1 ORDER BY created_at', [request.params.workspaceId])
-  response.json({ analysisClosed: workspace.analysis_closed, matches: matches.rows, selected: selections.rows.map((row) => Number(row.match_id)) })
+  response.json({ analysisClosed: workspace.analysis_closed, matches: matches.rows.map((match) => ({ ...match, id: Number(match.id) })), selected: selections.rows.map((row) => Number(row.match_id)) })
 })
 app.post('/api/workspaces/:workspaceId/matches', async (request, response) => {
   const workspace = await ensureWorkspace(request.params.workspaceId)
