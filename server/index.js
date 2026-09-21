@@ -53,14 +53,21 @@ const majorFootballLeagues = {
   bundesliga: { id: 78, name: 'Bundesliga', oddsSportKey: 'soccer_germany_bundesliga' },
   ligue_1: { id: 61, name: 'Ligue 1', oddsSportKey: 'soccer_france_ligue_one' },
 }
+const sportProviders = {
+  FUTBOL: { host: 'v3.football.api-sports.io', path: 'fixtures', leagues: majorFootballLeagues },
+  BALONCESTO: { host: 'v1.basketball.api-sports.io', path: 'games', leagues: { nba: { id: 12, name: 'NBA', oddsSportKey: 'basketball_nba' } } },
+  BEISBOL: { host: 'v1.baseball.api-sports.io', path: 'games', leagues: { mlb: { id: 1, name: 'MLB', oddsSportKey: 'baseball_mlb' } } },
+  VOLEIBOL: { host: 'v1.volleyball.api-sports.io', path: 'games', leagues: { nations_league: { id: 23, name: 'Nations League', oddsSportKey: 'volleyball' } } },
+}
 
-app.get('/api/football/fixtures', async (request, response) => {
+app.get('/api/sports/fixtures', async (request, response) => {
   if (!process.env.API_SPORTS_KEY) return response.status(503).json({ error: 'API-Sports no está configurada.' })
-  const league = majorFootballLeagues[request.query.league]
+  const provider = sportProviders[String(request.query.sport || '')]
+  const league = provider?.leagues[request.query.league]
   const date = String(request.query.date || '')
-  if (!league || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return response.status(400).json({ error: 'Indica una liga admitida y una fecha válida.' })
+  if (!provider || !league || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return response.status(400).json({ error: 'Indica un deporte, liga admitida y fecha válida.' })
   const season = Number(date.slice(0, 4)) - (Number(date.slice(5, 7)) < 7 ? 1 : 0)
-  const url = new URL('https://v3.football.api-sports.io/fixtures')
+  const url = new URL(`https://${provider.host}/${provider.path}`)
   url.search = new URLSearchParams({ league: String(league.id), season: String(season), date }).toString()
   const fixturesResponse = await fetch(url, { headers: { 'x-apisports-key': process.env.API_SPORTS_KEY } })
   if (!fixturesResponse.ok) return response.status(fixturesResponse.status).json({ error: 'No se pudieron consultar los partidos de la competición.' })
@@ -69,10 +76,10 @@ app.get('/api/football/fixtures', async (request, response) => {
   response.json({
     league: { key: request.query.league, name: league.name, oddsSportKey: league.oddsSportKey },
     fixtures: (data.response || []).map((fixture) => ({
-      id: fixture.fixture.id,
-      home: fixture.teams.home.name,
-      away: fixture.teams.away.name,
-      time: fixture.fixture.date,
+      id: fixture.fixture?.id ?? fixture.id,
+      home: fixture.teams?.home?.name ?? fixture.teams?.home?.name ?? fixture.home?.name,
+      away: fixture.teams?.away?.name ?? fixture.teams?.away?.name ?? fixture.away?.name,
+      time: fixture.fixture?.date ?? fixture.date,
     })),
   })
 })
