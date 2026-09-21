@@ -34,6 +34,14 @@ async function ensureWorkspace(id) {
 }
 
 app.get('/health', async (_request, response) => { await pool.query('SELECT 1'); response.json({ status: 'ok' }) })
+app.get('/api/providers/status', (_request, response) => {
+  response.json({
+    odds: Boolean(process.env.ODDS_API_KEY),
+    apiSports: Boolean(process.env.API_SPORTS_KEY),
+    configuredSports: ['TENIS', 'FUTBOL', 'BALONCESTO', 'BEISBOL', 'VOLEIBOL'],
+    note: 'Las claves no se exponen; solo se informa si están configuradas.',
+  })
+})
 app.get('/api/workspaces/:workspaceId', async (request, response) => {
   const workspace = await ensureWorkspace(request.params.workspaceId)
   const matches = await pool.query('SELECT id, sport, event, match_time AS time, players, ranking, odds::float, classification, reason FROM matches WHERE workspace_id = $1 ORDER BY id', [request.params.workspaceId])

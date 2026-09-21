@@ -8,7 +8,20 @@ Aplicación de análisis deportivo y control personal. No realiza búsquedas de 
 2. Tras desplegar Render, copia la URL de la API y define `CLIENT_ORIGIN` con la URL final de Netlify.
 3. Importa el repositorio en Netlify. Define `VITE_API_URL` con la URL de Render y despliega.
 
-Nunca incluyas credenciales en `.env` dentro del repositorio. Usa el panel de variables de entorno de cada proveedor.# React + TypeScript + Vite
+Nunca incluyas credenciales en `.env` dentro del repositorio. Usa el panel de variables de entorno de cada proveedor.
+
+## Datos deportivos reales
+
+Configura estas variables exclusivamente en **Render → Environment**:
+
+- `ODDS_API_KEY`: cuotas actuales, mercados y comparación de casas desde The Odds API.
+- `API_SPORTS_KEY`: calendarios, resultados y estadísticas de API-Sports para tenis, fútbol, baloncesto, béisbol y voleibol, según el plan contratado.
+
+Después del despliegue comprueba que las claves existen, sin exponerlas, en `https://atlas-research-api.onrender.com/api/providers/status`.
+
+La aplicación consultará únicamente los partidos que añadas a tu lista. Si faltan datos verificables, el resultado debe seguir siendo `NO BET`.
+
+# React + TypeScript + Vite
 
 This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
 
