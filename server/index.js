@@ -79,13 +79,14 @@ app.get('/api/sports/fixtures', async (request, response) => {
   const league = provider?.leagues[request.query.league]
   const date = String(request.query.date || '')
   if (!provider || !league || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return response.status(400).json({ error: 'Indica un deporte, liga admitida y fecha válida.' })
-  const season = Number(date.slice(0, 4)) - (Number(date.slice(5, 7)) < 7 ? 1 : 0)
   const url = new URL(`https://${provider.host}/${provider.path}`)
-  url.search = new URLSearchParams({ league: String(league.id), season: String(season), date }).toString()
+  const query = { league: String(league.id), date }
+  if (request.query.sport === 'FUTBOL') query.season = String(Number(date.slice(0, 4)) - (Number(date.slice(5, 7)) < 7 ? 1 : 0))
+  url.search = new URLSearchParams(query).toString()
   const fixturesResponse = await fetch(url, { headers: { 'x-apisports-key': process.env.API_SPORTS_KEY } })
   if (!fixturesResponse.ok) return response.status(fixturesResponse.status).json({ error: 'No se pudieron consultar los partidos de la competición.' })
   const data = await fixturesResponse.json()
-  if (data.errors && Object.keys(data.errors).length) return response.status(502).json({ error: 'El proveedor no pudo devolver los partidos solicitados.' })
+  if (data.errors && Object.keys(data.errors).length) return response.status(502).json({ error: 'El proveedor no pudo devolver los partidos solicitados.', detail: data.errors })
   response.json({
     league: { key: request.query.league, name: league.name, oddsSportKey: league.oddsSportKey },
     fixtures: (data.response || []).map((fixture) => ({
