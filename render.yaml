@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: atlas-research-api
+    runtime: node
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: atlas-research-db
+          property: connectionString
+      - key: CLIENT_ORIGIN
+        sync: false
+databases:
+  - name: atlas-research-db
+    plan: free

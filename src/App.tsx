@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { AlertTriangle, ArrowDownRight, Check, ChevronRight, CircleHelp, ClipboardCheck, LockKeyhole, Plus, Search, ShieldCheck, SlidersHorizontal, X } from 'lucide-react'
 import './App.css'
 
@@ -20,23 +20,45 @@ const matches: Match[] = [
 const label: Record<Classification, string> = { INTERESANTE: 'Interesante', REVISAR: 'Revisar', DESCARTADO: 'Descartado' }
 
 function App() {
+  const apiUrl = import.meta.env.VITE_API_URL?.replace(/\/$/, '')
+  const workspaceId = 'personal-default'
+  const [storedMatches, setStoredMatches] = useState(matches)
   const [activeMatchId, setActiveMatchId] = useState(1)
   const [filter, setFilter] = useState<Classification | 'TODOS'>('TODOS')
   const [selected, setSelected] = useState<number[]>([])
   const [analysisClosed, setAnalysisClosed] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
-  const active = matches.find((match) => match.id === activeMatchId) ?? matches[0]
-  const visible = filter === 'TODOS' ? matches : matches.filter((match) => match.classification === filter)
+  const [syncError, setSyncError] = useState('')
+  const active = storedMatches.find((match) => match.id === activeMatchId) ?? storedMatches[0]
+  const visible = filter === 'TODOS' ? storedMatches : storedMatches.filter((match) => match.classification === filter)
+  useEffect(() => {
+    if (!apiUrl) return
+    fetch(`${apiUrl}/api/workspaces/${workspaceId}`).then(async (response) => {
+      if (!response.ok) throw new Error('No se pudo cargar la lista')
+      return response.json()
+    }).then((data) => {
+      setStoredMatches(data.matches)
+      setSelected(data.selected)
+      setAnalysisClosed(data.analysisClosed)
+      if (data.matches.length) setActiveMatchId(data.matches[0].id)
+    }).catch(() => setSyncError('No se pudo conectar con la nube. Revisa VITE_API_URL.'))
+  }, [apiUrl])
   const toggleSelection = (id: number) => {
-    if (selected.includes(id)) { setSelected(selected.filter((item) => item !== id)); return }
-    if (selected.length < 3 && !analysisClosed) setSelected([...selected, id])
+    const next = selected.includes(id) ? selected.filter((item) => item !== id) : selected.length < 3 && !analysisClosed ? [...selected, id] : selected
+    setSelected(next)
+    if (apiUrl && next !== selected) fetch(`${apiUrl}/api/workspaces/${workspaceId}/selections`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ selected: next }) }).then((response) => { if (!response.ok) throw new Error() }).catch(() => setSyncError('No se pudo guardar la selección en la nube.'))
+  }
+  const closeAnalysis = () => {
+    setAnalysisClosed(true)
+    if (apiUrl) fetch(`${apiUrl}/api/workspaces/${workspaceId}/closed`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ closed: true }) }).then((response) => { if (!response.ok) throw new Error() }).catch(() => { setAnalysisClosed(false); setSyncError('No se pudo cerrar el análisis en la nube.') })
   }
   return <main className="app-shell">
     <header className="topbar"><div className="brand"><span className="brand-mark">A</span><span>Atlas <strong>Research</strong></span></div><div className="analysis-status"><span className="status-dot" /> Análisis de hoy <b>{analysisClosed ? 'cerrado' : 'en curso'}</b></div><div className="top-actions"><button className="icon-button" aria-label="Buscar"><Search size={18} /></button><button className="avatar" aria-label="Perfil">MR</button></div></header>
-    <section className="workspace-header"><div><p className="eyebrow">LISTA PERSONAL · 21 SEPT 2026</p><h1>Partidos seleccionados</h1><p className="subhead">Analiza solo esta lista. La aplicación no busca eventos adicionales ni fuerza una selección.</p></div><div className="header-actions"><button className="secondary-button" onClick={() => setShowAdd(true)} disabled={analysisClosed}><Plus size={17} /> Añadir partido</button><button className="primary-button" onClick={() => setAnalysisClosed(true)} disabled={analysisClosed}><LockKeyhole size={16} /> {analysisClosed ? 'Análisis cerrado' : 'Cerrar análisis'}</button></div></section>
+    <section className="workspace-header"><div><p className="eyebrow">LISTA PERSONAL · 21 SEPT 2026</p><h1>Partidos seleccionados</h1><p className="subhead">Analiza solo esta lista. La aplicación no busca eventos adicionales ni fuerza una selección.</p></div><div className="header-actions"><button className="secondary-button" onClick={() => setShowAdd(true)} disabled={analysisClosed}><Plus size={17} /> Añadir partido</button><button className="primary-button" onClick={closeAnalysis} disabled={analysisClosed}><LockKeyhole size={16} /> {analysisClosed ? 'Análisis cerrado' : 'Cerrar análisis'}</button></div></section>
+    {syncError && <section className="cloud-error">{syncError}</section>}
     {showAdd && <section className="add-panel"><div><b>Lista cerrada</b><span>Puedes añadir partidos solo antes de cerrar el análisis.</span></div><button className="icon-button" aria-label="Cerrar" onClick={() => setShowAdd(false)}><X size={18} /></button></section>}
     <section className="content-grid">
-      <aside className="match-list"><div className="list-header"><span>{matches.length} PARTIDOS</span><button className="filter-button"><SlidersHorizontal size={15} /> Filtros</button></div><div className="filter-tabs">{(['TODOS', 'INTERESANTE', 'REVISAR', 'DESCARTADO'] as const).map((item) => <button className={filter === item ? 'active' : ''} onClick={() => setFilter(item)} key={item}>{item === 'TODOS' ? 'Todos' : label[item]}</button>)}</div><div className="matches">{visible.map((match) => <button className={`match-row ${activeMatchId === match.id ? 'selected' : ''}`} onClick={() => setActiveMatchId(match.id)} key={match.id}><span className={`class-dot ${match.classification.toLowerCase()}`} /><span className="match-main"><span className="match-meta">{match.sport} · {match.time}</span><b>{match.players}</b><span className="match-reason">{match.reason}</span></span><ChevronRight size={17} /></button>)}</div></aside>
+      <aside className="match-list"><div className="list-header"><span>{storedMatches.length} PARTIDOS</span><button className="filter-button"><SlidersHorizontal size={15} /> Filtros</button></div><div className="filter-tabs">{(['TODOS', 'INTERESANTE', 'REVISAR', 'DESCARTADO'] as const).map((item) => <button className={filter === item ? 'active' : ''} onClick={() => setFilter(item)} key={item}>{item === 'TODOS' ? 'Todos' : label[item]}</button>)}</div><div className="matches">{visible.map((match) => <button className={`match-row ${activeMatchId === match.id ? 'selected' : ''}`} onClick={() => setActiveMatchId(match.id)} key={match.id}><span className={`class-dot ${match.classification.toLowerCase()}`} /><span className="match-main"><span className="match-meta">{match.sport} · {match.time}</span><b>{match.players}</b><span className="match-reason">{match.reason}</span></span><ChevronRight size={17} /></button>)}</div></aside>
       <section className="analysis-panel"><div className="analysis-topline"><span>{active.event} · Hoy {active.time}</span><span className={`classification ${active.classification.toLowerCase()}`}>{label[active.classification]}</span></div><div className="title-row"><div><h2>{active.players}</h2><p>Mercado: ganador del partido</p></div><button className={`selection-button ${selected.includes(active.id) ? 'is-selected' : ''}`} onClick={() => toggleSelection(active.id)} disabled={analysisClosed || (!selected.includes(active.id) && selected.length >= 3)}>{selected.includes(active.id) ? <><Check size={16} /> En mis selecciones</> : <><Plus size={16} /> Seleccionar</>}</button></div>
         <div className="callout interest-callout"><CircleHelp size={19} /><div><b>Señal para investigar, no una recomendación.</b><span>El jugador de peor ranking aparece como favorito con cuota dentro del rango objetivo.</span></div></div>
         <div className="metric-grid"><div><span>RANKING</span><b>{active.ranking}</b><small>Diferencia: 55 puestos</small></div><div><span>CUOTA ACTUAL</span><b>{active.odds.toFixed(2)}</b><small>Rango permitido: 1.40 - 2.00</small></div><div><span>MOVIMIENTO</span><b className="movement"><ArrowDownRight size={18} /> 1.98 → {active.odds.toFixed(2)}</b><small>Desde apertura · ejemplo</small></div><div><span>CONFIANZA DEL DATO</span><b>Media</b><small>Fuentes por confirmar</small></div></div>
