@@ -19,7 +19,9 @@ const seedMatches = [
 async function prepareDatabase() {
   await pool.query(`CREATE TABLE IF NOT EXISTS workspaces (id TEXT PRIMARY KEY, analysis_closed BOOLEAN NOT NULL DEFAULT FALSE, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
     CREATE TABLE IF NOT EXISTS matches (id BIGSERIAL PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE, sport TEXT NOT NULL, event TEXT NOT NULL, match_time TEXT NOT NULL, players TEXT NOT NULL, ranking TEXT NOT NULL, odds NUMERIC(5,2) NOT NULL, classification TEXT NOT NULL CHECK (classification IN ('INTERESANTE', 'REVISAR', 'DESCARTADO')), reason TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
-    CREATE TABLE IF NOT EXISTS selections (workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE, match_id BIGINT NOT NULL REFERENCES matches(id) ON DELETE CASCADE, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (workspace_id, match_id));`)
+    CREATE TABLE IF NOT EXISTS selections (workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE, match_id BIGINT NOT NULL REFERENCES matches(id) ON DELETE CASCADE, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (workspace_id, match_id));
+    CREATE TABLE IF NOT EXISTS daily_plans (workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE, plan_date DATE NOT NULL, bankroll NUMERIC(12,2) NOT NULL DEFAULT 0, goal NUMERIC(12,2) NOT NULL DEFAULT 0, risk_percent NUMERIC(5,2) NOT NULL DEFAULT 5 CHECK (risk_percent > 0 AND risk_percent <= 10), PRIMARY KEY (workspace_id, plan_date));
+    CREATE TABLE IF NOT EXISTS daily_records (workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE, plan_date DATE NOT NULL, match_id BIGINT NOT NULL REFERENCES matches(id) ON DELETE CASCADE, stake NUMERIC(12,2) NOT NULL CHECK (stake >= 0), result TEXT NOT NULL DEFAULT 'PENDIENTE' CHECK (result IN ('PENDIENTE', 'GANADO', 'PERDIDO', 'NULO')), PRIMARY KEY (workspace_id, plan_date, match_id));`)
 }
 
 async function ensureWorkspace(id) {
@@ -37,6 +39,45 @@ app.get('/api/workspaces/:workspaceId', async (request, response) => {
   const matches = await pool.query('SELECT id, sport, event, match_time AS time, players, ranking, odds::float, classification, reason FROM matches WHERE workspace_id = $1 ORDER BY id', [request.params.workspaceId])
   const selections = await pool.query('SELECT match_id FROM selections WHERE workspace_id = $1 ORDER BY created_at', [request.params.workspaceId])
   response.json({ analysisClosed: workspace.analysis_closed, matches: matches.rows.map((match) => ({ ...match, id: Number(match.id) })), selected: selections.rows.map((row) => Number(row.match_id)) })
+})
+app.get('/api/workspaces/:workspaceId/daily', async (request, response) => {
+  await ensureWorkspace(request.params.workspaceId)
+  const date = new Date().toISOString().slice(0, 10)
+  await pool.query('INSERT INTO daily_plans (workspace_id, plan_date) VALUES ($1, $2) ON CONFLICT DO NOTHING', [request.params.workspaceId, date])
+  const plan = await pool.query('SELECT bankroll::float, goal::float, risk_percent::float AS "riskPercent" FROM daily_plans WHERE workspace_id = $1 AND plan_date = $2', [request.params.workspaceId, date])
+  const entries = await pool.query(`SELECT record.match_id AS "matchId", record.stake::float AS stake, record.result, match.odds::float AS odds
+    FROM daily_records record JOIN matches match ON match.id = record.match_id WHERE record.workspace_id = $1 AND record.plan_date = $2`, [request.params.workspaceId, date])
+  const stats = entries.rows.reduce((total, entry) => {
+    total.exposure += entry.stake
+    if (entry.result === 'GANADO') total.net += entry.stake * (entry.odds - 1)
+    if (entry.result === 'PERDIDO') total.net -= entry.stake
+    return total
+  }, { exposure: 0, net: 0 })
+  response.json({ plan: plan.rows[0], entries: entries.rows, stats: { ...stats, roi: stats.exposure ? (stats.net / stats.exposure) * 100 : 0 } })
+})
+app.put('/api/workspaces/:workspaceId/daily/plan', async (request, response) => {
+  await ensureWorkspace(request.params.workspaceId)
+  const bankroll = Number(request.body.bankroll)
+  const goal = Number(request.body.goal)
+  const riskPercent = Number(request.body.riskPercent)
+  if (![bankroll, goal, riskPercent].every(Number.isFinite) || bankroll < 0 || goal < 0 || riskPercent <= 0 || riskPercent > 10) return response.status(400).json({ error: 'Plan diario no válido.' })
+  const date = new Date().toISOString().slice(0, 10)
+  const result = await pool.query(`INSERT INTO daily_plans (workspace_id, plan_date, bankroll, goal, risk_percent) VALUES ($1,$2,$3,$4,$5)
+    ON CONFLICT (workspace_id, plan_date) DO UPDATE SET bankroll = EXCLUDED.bankroll, goal = EXCLUDED.goal, risk_percent = EXCLUDED.risk_percent RETURNING bankroll::float, goal::float, risk_percent::float AS "riskPercent"`, [request.params.workspaceId, date, bankroll, goal, riskPercent])
+  response.json({ plan: result.rows[0] })
+})
+app.put('/api/workspaces/:workspaceId/daily/records', async (request, response) => {
+  await ensureWorkspace(request.params.workspaceId)
+  const date = new Date().toISOString().slice(0, 10)
+  const entries = request.body.entries ?? []
+  if (!Array.isArray(entries) || entries.length > 5) return response.status(400).json({ error: 'Máximo de cinco registros diarios.' })
+  const plan = await pool.query('SELECT bankroll::float, risk_percent::float AS "riskPercent" FROM daily_plans WHERE workspace_id = $1 AND plan_date = $2', [request.params.workspaceId, date])
+  const maxExposure = (plan.rows[0]?.bankroll ?? 0) * (plan.rows[0]?.riskPercent ?? 5) / 100
+  const exposure = entries.reduce((sum, entry) => sum + Number(entry.stake || 0), 0)
+  if (!Number.isFinite(exposure) || exposure > maxExposure + 0.001) return response.status(400).json({ error: 'La exposición supera el límite diario.' })
+  await pool.query('DELETE FROM daily_records WHERE workspace_id = $1 AND plan_date = $2', [request.params.workspaceId, date])
+  for (const entry of entries) await pool.query('INSERT INTO daily_records (workspace_id, plan_date, match_id, stake, result) VALUES ($1,$2,$3,$4,$5)', [request.params.workspaceId, date, Number(entry.matchId), Number(entry.stake), ['GANADO', 'PERDIDO', 'NULO'].includes(entry.result) ? entry.result : 'PENDIENTE'])
+  response.json({ entries })
 })
 app.post('/api/workspaces/:workspaceId/matches', async (request, response) => {
   const workspace = await ensureWorkspace(request.params.workspaceId)

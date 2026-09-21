@@ -4,6 +4,8 @@ import './App.css'
 
 type Classification = 'INTERESANTE' | 'REVISAR' | 'DESCARTADO'
 type Match = { id: number; sport: string; event: string; time: string; players: string; ranking: string; odds: number; classification: Classification; reason: string }
+type DailyPlan = { bankroll: number; goal: number; riskPercent: number }
+type DailyStats = { exposure: number; net: number; roi: number }
 
 const matches: Match[] = [
   { id: 1, sport: 'TENIS', event: 'ATP Chengdu', time: '13:00', players: 'L. Sonego vs Y. Wu', ranking: '#80 / #25', odds: 1.85, classification: 'INTERESANTE', reason: 'Peor ranking, favorito del mercado' },
@@ -30,6 +32,9 @@ function App() {
   const [showAdd, setShowAdd] = useState(false)
   const [showReview, setShowReview] = useState(false)
   const [syncError, setSyncError] = useState('')
+  const [dailyPlan, setDailyPlan] = useState<DailyPlan>({ bankroll: 0, goal: 0, riskPercent: 5 })
+  const [dailyStats, setDailyStats] = useState<DailyStats>({ exposure: 0, net: 0, roi: 0 })
+  const [dailyResults, setDailyResults] = useState<Record<number, string>>({})
   const [newPlayers, setNewPlayers] = useState('')
   const [newEvent, setNewEvent] = useState('')
   const active = storedMatches.find((match) => Number(match.id) === Number(activeMatchId)) ?? storedMatches[0] ?? matches[0]
@@ -56,6 +61,14 @@ function App() {
       setAnalysisClosed(data.analysisClosed)
       if (cloudMatches.length) setActiveMatchId(cloudMatches[0].id)
     }).catch(() => setSyncError('No se pudo conectar con la nube. Revisa VITE_API_URL.'))
+    fetch(`${apiUrl}/api/workspaces/${workspaceId}/daily`).then(async (response) => {
+      if (!response.ok) throw new Error()
+      return response.json()
+    }).then((data) => {
+      setDailyPlan(data.plan)
+      setDailyStats(data.stats)
+      setDailyResults(Object.fromEntries(data.entries.map((entry: { matchId: number; result: string }) => [Number(entry.matchId), entry.result])))
+    }).catch(() => setSyncError('No se pudo cargar el registro diario.'))
   }, [apiUrl])
   const toggleSelection = (id: number) => {
     const next = selected.includes(id) ? selected.filter((item) => item !== id) : selected.length < 5 && !analysisClosed ? [...selected, id] : selected
@@ -82,12 +95,27 @@ function App() {
       .catch(() => setSyncError('No se pudo añadir el partido en la nube.'))
   }
   const reviewedMatches = storedMatches.filter((match) => selected.includes(match.id))
+  const maxExposure = dailyPlan.bankroll * dailyPlan.riskPercent / 100
+  const rawStakes = reviewedMatches.map((match) => dailyPlan.goal > 0 && match.odds > 1 ? dailyPlan.goal / reviewedMatches.length / (match.odds - 1) : 0)
+  const requestedExposure = rawStakes.reduce((sum, stake) => sum + stake, 0)
+  const scale = requestedExposure > maxExposure && requestedExposure > 0 ? maxExposure / requestedExposure : 1
+  const plannedEntries = reviewedMatches.map((match, index) => ({ matchId: match.id, stake: Number((rawStakes[index] * scale).toFixed(2)), result: dailyResults[match.id] ?? 'PENDIENTE', odds: match.odds }))
+  const plannedExposure = plannedEntries.reduce((sum, entry) => sum + entry.stake, 0)
+  const plannedPotential = plannedEntries.reduce((sum, entry) => sum + entry.stake * (entry.odds - 1), 0)
+  const calculatedNet = plannedEntries.reduce((sum, entry) => entry.result === 'GANADO' ? sum + entry.stake * (entry.odds - 1) : entry.result === 'PERDIDO' ? sum - entry.stake : sum, 0)
+  const saveDailyPlan = () => {
+    if (!apiUrl) return
+    fetch(`${apiUrl}/api/workspaces/${workspaceId}/daily/plan`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(dailyPlan) })
+      .then(async (response) => { if (!response.ok) throw new Error(); return fetch(`${apiUrl}/api/workspaces/${workspaceId}/daily/records`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ entries: plannedEntries }) }) })
+      .then((response) => { if (!response.ok) throw new Error(); setDailyStats({ exposure: plannedExposure, net: calculatedNet, roi: plannedExposure ? calculatedNet / plannedExposure * 100 : 0 }) })
+      .catch(() => setSyncError('No se pudo guardar el plan diario. Revisa el límite de exposición.'))
+  }
   return <main className="app-shell">
     <header className="topbar"><div className="brand"><span className="brand-mark">A</span><span>Atlas <strong>Research</strong></span></div><div className="analysis-status"><span className="status-dot" /> Análisis de hoy <b>{analysisClosed ? 'cerrado' : 'en curso'}</b></div><div className="top-actions"><button className="icon-button" aria-label="Buscar"><Search size={18} /></button><button className="avatar" aria-label="Perfil">MR</button></div></header>
     <section className="workspace-header"><div><p className="eyebrow">LISTA PERSONAL · 21 SEPT 2026</p><h1>Partidos seleccionados</h1><p className="subhead">Analiza solo esta lista. La aplicación no busca eventos adicionales ni fuerza una selección.</p></div><div className="header-actions"><button className="secondary-button" onClick={() => setShowAdd(true)} disabled={analysisClosed}><Plus size={17} /> Añadir partido</button><button className="primary-button" onClick={closeAnalysis} disabled={analysisClosed}><LockKeyhole size={16} /> {analysisClosed ? 'Análisis cerrado' : 'Cerrar análisis'}</button></div></section>
     {syncError && <section className="cloud-error">{syncError}</section>}
     {showAdd && <section className="add-panel"><div className="add-fields"><input value={newPlayers} onChange={(event) => setNewPlayers(event.target.value)} placeholder="Participantes o equipos" autoFocus /><input value={newEvent} onChange={(event) => setNewEvent(event.target.value)} placeholder="Torneo o competición" /><button className="add-submit" onClick={addMatch} disabled={!newPlayers.trim() || !newEvent.trim()}>Añadir</button></div><button className="icon-button" aria-label="Cerrar" onClick={() => setShowAdd(false)}><X size={18} /></button></section>}
-    {showReview && <section className="review-panel"><div><p className="eyebrow">MIS CANDIDATOS · {selected.length}/5</p><h2>Revisión antes de decidir</h2><p>Estos candidatos no son apuestas ni implican una recomendación.</p><ul>{reviewedMatches.map((match) => <li key={match.id}><b>{match.players}</b><span>{match.event} · Cuota {Number(match.odds || 0).toFixed(2)} · {label[match.classification] ?? 'Revisar'}</span></li>)}</ul></div><button className="icon-button" aria-label="Cerrar revisión" onClick={() => setShowReview(false)}><X size={18} /></button></section>}
+    {showReview && <section className="review-panel"><div><p className="eyebrow">MIS CANDIDATOS · {selected.length}/5</p><h2>Revisión antes de decidir</h2><p>Estos candidatos no son apuestas ni implican una recomendación.</p><ul>{reviewedMatches.map((match) => { const entry = plannedEntries.find((item) => item.matchId === match.id); return <li key={match.id}><b>{match.players}</b><span>{match.event} · Cuota {Number(match.odds || 0).toFixed(2)} · Exposición {entry?.stake.toFixed(2) ?? '0.00'}</span><select value={dailyResults[match.id] ?? 'PENDIENTE'} onChange={(event) => setDailyResults({ ...dailyResults, [match.id]: event.target.value })}><option value="PENDIENTE">Pendiente</option><option value="GANADO">Ganado</option><option value="PERDIDO">Perdido</option><option value="NULO">Nulo</option></select></li>})}</ul><button className="review-save" onClick={saveDailyPlan}>Guardar plan y resultados</button></div><button className="icon-button" aria-label="Cerrar revisión" onClick={() => setShowReview(false)}><X size={18} /></button></section>}
     <section className="content-grid">
       <aside className="match-list"><div className="list-header"><span>{storedMatches.length} PARTIDOS</span><button className="filter-button"><SlidersHorizontal size={15} /> Filtros</button></div><div className="filter-tabs">{(['TODOS', 'INTERESANTE', 'REVISAR', 'DESCARTADO'] as const).map((item) => <button className={filter === item ? 'active' : ''} onClick={() => setFilter(item)} key={item}>{item === 'TODOS' ? 'Todos' : label[item]}</button>)}</div><div className="matches">{visible.map((match) => <button className={`match-row ${Number(activeMatchId) === Number(match.id) ? 'selected' : ''}`} onClick={() => setActiveMatchId(Number(match.id))} key={match.id}><span className={`class-dot ${match.classification.toLowerCase()}`} /><span className="match-main"><span className="match-meta">{match.sport} · {match.time}</span><b>{match.players}</b><span className="match-reason">{match.reason}</span></span><ChevronRight size={17} /></button>)}</div></aside>
       <section className="analysis-panel"><div className="analysis-topline"><span>{active.event} · Hoy {active.time}</span><span className={`classification ${active.classification.toLowerCase()}`}>{label[active.classification] ?? 'Revisar'}</span></div><div className="title-row"><div><h2>{active.players}</h2><p>Mercado: ganador del partido</p></div><button className={`selection-button ${selected.includes(Number(active.id)) ? 'is-selected' : ''}`} onClick={() => toggleSelection(Number(active.id))} disabled={analysisClosed || (!selected.includes(Number(active.id)) && selected.length >= 5)}>{selected.includes(Number(active.id)) ? <><Check size={16} /> Guardado para revisión</> : <><Plus size={16} /> Guardar para revisión</>}</button></div>
@@ -97,7 +125,7 @@ function App() {
         <section className="odds-section"><div className="section-heading"><div><h3>Cuotas y trazabilidad</h3><p>Datos de muestra. Conecta fuentes verificadas antes de decidir.</p></div><span className="data-badge"><ShieldCheck size={14} /> Requiere verificación</span></div><div className="odds-table"><div><span>Casa</span><span>Apertura</span><span>Actual</span></div><div><b>Casa A</b><span>1.98</span><strong>1.85</strong></div><div><b>Casa B</b><span>1.94</span><strong>1.87</strong></div><div><b>Casa C</b><span>2.01</span><strong>1.91</strong></div></div></section>
         <section className="anomaly"><AlertTriangle size={19} /><div><b>ANOMALÍA — REQUIERE INVESTIGACIÓN</b><p>Diferencia de 0.06 entre la mejor y la peor cuota disponible. Por sí sola no indica un resultado ni una irregularidad.</p></div></section><section className="conclusion"><ClipboardCheck size={21} /><div><span>DECISIÓN ACTUAL</span><b>NO BET — NO JUGAR ESTE PARTIDO</b><p>No hay información verificada suficiente para recomendar un mercado ni un participante. Guardarlo solo permite revisarlo más tarde.</p></div></section>
       </section>
-      <aside className="control-panel"><div className="control-title"><ShieldCheck size={20} /><div><h2>Control personal</h2><p>Reglas activas para hoy</p></div></div><div className="selection-count"><span>CANDIDATOS</span><b>{selected.length}<small> / 5 máximo</small></b><div className="progress"><i style={{ width: `${(selected.length / 5) * 100}%` }} /></div></div><ul className="rule-list"><li><Check size={16} /> Sin apuestas en vivo</li><li><Check size={16} /> Sin combinadas</li><li><Check size={16} /> Stake no aumenta tras pérdida</li><li><Check size={16} /> Máximo cinco candidatos</li><li className={analysisClosed ? 'locked-rule' : ''}>{analysisClosed ? <LockKeyhole size={16} /> : <Check size={16} />} {analysisClosed ? 'Lista bloqueada' : 'Lista aún editable'}</li></ul><div className="no-bet-box"><b>NO BET es un resultado válido</b><p>Si ningún partido reúne evidencia suficiente, no se habilita ningún candidato.</p></div><button className="review-button" onClick={() => setShowReview(true)} disabled={selected.length === 0}>Revisar mis {selected.length} candidatos</button></aside>
+      <aside className="control-panel"><div className="control-title"><ShieldCheck size={20} /><div><h2>Control personal</h2><p>Plan y estadísticas de hoy</p></div></div><div className="bankroll-form"><label>Bankroll disponible<input type="number" min="0" value={dailyPlan.bankroll || ''} onChange={(event) => setDailyPlan({ ...dailyPlan, bankroll: Number(event.target.value) })} /></label><label>Objetivo orientativo<input type="number" min="0" value={dailyPlan.goal || ''} onChange={(event) => setDailyPlan({ ...dailyPlan, goal: Number(event.target.value) })} /></label><label>Riesgo máximo (%)<input type="number" min="1" max="10" value={dailyPlan.riskPercent} onChange={(event) => setDailyPlan({ ...dailyPlan, riskPercent: Number(event.target.value) })} /></label></div><div className="selection-count"><span>CANDIDATOS</span><b>{selected.length}<small> / 5 máximo</small></b><div className="progress"><i style={{ width: `${(selected.length / 5) * 100}%` }} /></div></div><div className="daily-metrics"><span>Exposición máxima <b>{maxExposure.toFixed(2)}</b></span><span>Planificada <b>{plannedExposure.toFixed(2)}</b></span><span>Ganancia potencial <b>{plannedPotential.toFixed(2)}</b></span><span>Resultado del día <b className={dailyStats.net < 0 ? 'negative' : ''}>{dailyStats.net.toFixed(2)} · ROI {dailyStats.roi.toFixed(1)}%</b></span></div>{requestedExposure > maxExposure && selected.length > 0 && <div className="risk-warning">El objetivo supera el riesgo máximo. El plan se reduce; no garantiza el objetivo.</div>}<ul className="rule-list"><li><Check size={16} /> Sin apuestas en vivo</li><li><Check size={16} /> Sin combinadas</li><li><Check size={16} /> Sin perseguir pérdidas</li><li><Check size={16} /> Máximo cinco candidatos</li><li className={analysisClosed ? 'locked-rule' : ''}>{analysisClosed ? <LockKeyhole size={16} /> : <Check size={16} />} {analysisClosed ? 'Lista bloqueada' : 'Lista aún editable'}</li></ul><button className="review-button" onClick={saveDailyPlan} disabled={selected.length === 0 || dailyPlan.bankroll <= 0}>Guardar plan diario</button><button className="secondary-review" onClick={() => setShowReview(true)} disabled={selected.length === 0}>Revisar mis {selected.length} candidatos</button></aside>
     </section><footer>Atlas Research es una herramienta de análisis y control personal. No garantiza resultados ni sustituye una decisión responsable.</footer>
   </main>
 }
