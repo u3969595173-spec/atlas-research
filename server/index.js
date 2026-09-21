@@ -17,16 +17,17 @@ const seedMatches = [
 ]
 
 async function prepareDatabase() {
-  await pool.query(`CREATE TABLE IF NOT EXISTS workspaces (id TEXT PRIMARY KEY, analysis_closed BOOLEAN NOT NULL DEFAULT FALSE, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+  await pool.query(`CREATE TABLE IF NOT EXISTS workspaces (id TEXT PRIMARY KEY, analysis_closed BOOLEAN NOT NULL DEFAULT FALSE, favorite_teams TEXT NOT NULL DEFAULT '', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
     CREATE TABLE IF NOT EXISTS matches (id BIGSERIAL PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE, sport TEXT NOT NULL, event TEXT NOT NULL, odds_sport_key TEXT NOT NULL DEFAULT '', match_time TEXT NOT NULL, players TEXT NOT NULL, ranking TEXT NOT NULL, odds NUMERIC(5,2) NOT NULL, classification TEXT NOT NULL CHECK (classification IN ('INTERESANTE', 'REVISAR', 'DESCARTADO')), reason TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
     CREATE TABLE IF NOT EXISTS selections (workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE, match_id BIGINT NOT NULL REFERENCES matches(id) ON DELETE CASCADE, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (workspace_id, match_id));
     CREATE TABLE IF NOT EXISTS daily_plans (workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE, plan_date DATE NOT NULL, bankroll NUMERIC(12,2) NOT NULL DEFAULT 0, goal NUMERIC(12,2) NOT NULL DEFAULT 0, risk_percent NUMERIC(5,2) NOT NULL DEFAULT 5 CHECK (risk_percent > 0 AND risk_percent <= 10), PRIMARY KEY (workspace_id, plan_date));
     CREATE TABLE IF NOT EXISTS daily_records (workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE, plan_date DATE NOT NULL, match_id BIGINT NOT NULL REFERENCES matches(id) ON DELETE CASCADE, stake NUMERIC(12,2) NOT NULL CHECK (stake >= 0), result TEXT NOT NULL DEFAULT 'PENDIENTE' CHECK (result IN ('PENDIENTE', 'GANADO', 'PERDIDO', 'NULO')), PRIMARY KEY (workspace_id, plan_date, match_id));
-    ALTER TABLE matches ADD COLUMN IF NOT EXISTS odds_sport_key TEXT NOT NULL DEFAULT '';`)
+    ALTER TABLE matches ADD COLUMN IF NOT EXISTS odds_sport_key TEXT NOT NULL DEFAULT '';
+    ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS favorite_teams TEXT NOT NULL DEFAULT '';`)
 }
 
 async function ensureWorkspace(id) {
-  const result = await pool.query('INSERT INTO workspaces (id) VALUES ($1) ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id RETURNING analysis_closed', [id])
+  const result = await pool.query('INSERT INTO workspaces (id) VALUES ($1) ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id RETURNING analysis_closed, favorite_teams AS "favoriteTeams"', [id])
   const count = await pool.query('SELECT COUNT(*)::int AS count FROM matches WHERE workspace_id = $1', [id])
   if (count.rows[0].count === 0) {
     for (const match of seedMatches) await pool.query('INSERT INTO matches (workspace_id, sport, event, match_time, players, ranking, odds, classification, reason) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)', [id, ...match])
@@ -45,6 +46,36 @@ app.get('/api/providers/status', (_request, response) => {
 })
 const normalizeName = (value) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '')
 const defaultOddsSport = { FUTBOL: 'soccer_spain_la_liga', BALONCESTO: 'basketball_nba', BEISBOL: 'baseball_mlb' }
+const majorFootballLeagues = {
+  premier_league: { id: 39, name: 'Premier League', oddsSportKey: 'soccer_epl' },
+  la_liga: { id: 140, name: 'LaLiga', oddsSportKey: 'soccer_spain_la_liga' },
+  serie_a: { id: 135, name: 'Serie A', oddsSportKey: 'soccer_italy_serie_a' },
+  bundesliga: { id: 78, name: 'Bundesliga', oddsSportKey: 'soccer_germany_bundesliga' },
+  ligue_1: { id: 61, name: 'Ligue 1', oddsSportKey: 'soccer_france_ligue_one' },
+}
+
+app.get('/api/football/fixtures', async (request, response) => {
+  if (!process.env.API_SPORTS_KEY) return response.status(503).json({ error: 'API-Sports no está configurada.' })
+  const league = majorFootballLeagues[request.query.league]
+  const date = String(request.query.date || '')
+  if (!league || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return response.status(400).json({ error: 'Indica una liga admitida y una fecha válida.' })
+  const season = Number(date.slice(0, 4)) - (Number(date.slice(5, 7)) < 7 ? 1 : 0)
+  const url = new URL('https://v3.football.api-sports.io/fixtures')
+  url.search = new URLSearchParams({ league: String(league.id), season: String(season), date }).toString()
+  const fixturesResponse = await fetch(url, { headers: { 'x-apisports-key': process.env.API_SPORTS_KEY } })
+  if (!fixturesResponse.ok) return response.status(fixturesResponse.status).json({ error: 'No se pudieron consultar los partidos de la competición.' })
+  const data = await fixturesResponse.json()
+  if (data.errors && Object.keys(data.errors).length) return response.status(502).json({ error: 'El proveedor no pudo devolver los partidos solicitados.' })
+  response.json({
+    league: { key: request.query.league, name: league.name, oddsSportKey: league.oddsSportKey },
+    fixtures: (data.response || []).map((fixture) => ({
+      id: fixture.fixture.id,
+      home: fixture.teams.home.name,
+      away: fixture.teams.away.name,
+      time: fixture.fixture.date,
+    })),
+  })
+})
 
 app.post('/api/workspaces/:workspaceId/matches/:matchId/analysis', async (request, response) => {
   await ensureWorkspace(request.params.workspaceId)
@@ -78,7 +109,7 @@ app.get('/api/workspaces/:workspaceId', async (request, response) => {
   const workspace = await ensureWorkspace(request.params.workspaceId)
   const matches = await pool.query('SELECT id, sport, event, odds_sport_key AS "oddsSportKey", match_time AS time, players, ranking, odds::float, classification, reason FROM matches WHERE workspace_id = $1 ORDER BY id', [request.params.workspaceId])
   const selections = await pool.query('SELECT match_id FROM selections WHERE workspace_id = $1 ORDER BY created_at', [request.params.workspaceId])
-  response.json({ analysisClosed: workspace.analysis_closed, matches: matches.rows.map((match) => ({ ...match, id: Number(match.id) })), selected: selections.rows.map((row) => Number(row.match_id)) })
+  response.json({ analysisClosed: workspace.analysis_closed, favoriteTeams: workspace.favoriteTeams, matches: matches.rows.map((match) => ({ ...match, id: Number(match.id) })), selected: selections.rows.map((row) => Number(row.match_id)) })
 })
 app.get('/api/workspaces/:workspaceId/daily', async (request, response) => {
   await ensureWorkspace(request.params.workspaceId)
@@ -131,6 +162,12 @@ app.put('/api/workspaces/:workspaceId/closed', async (request, response) => {
   await ensureWorkspace(request.params.workspaceId)
   const result = await pool.query('UPDATE workspaces SET analysis_closed = $2 WHERE id = $1 RETURNING analysis_closed', [request.params.workspaceId, Boolean(request.body.closed)])
   response.json({ analysisClosed: result.rows[0].analysis_closed })
+})
+app.put('/api/workspaces/:workspaceId/preferences', async (request, response) => {
+  await ensureWorkspace(request.params.workspaceId)
+  const favoriteTeams = String(request.body.favoriteTeams ?? '').slice(0, 500)
+  const result = await pool.query('UPDATE workspaces SET favorite_teams = $2 WHERE id = $1 RETURNING favorite_teams AS "favoriteTeams"', [request.params.workspaceId, favoriteTeams])
+  response.json(result.rows[0])
 })
 app.put('/api/workspaces/:workspaceId/selections', async (request, response) => {
   const workspace = await ensureWorkspace(request.params.workspaceId)
