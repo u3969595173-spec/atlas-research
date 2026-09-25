@@ -85,8 +85,16 @@ app.get('/api/sports/fixtures', async (request, response) => {
   if (request.query.sport === 'FUTBOL') query.season = String(Number(date.slice(0, 4)) - (Number(date.slice(5, 7)) < 7 ? 1 : 0))
   url.search = new URLSearchParams(query).toString()
   const fixturesResponse = await fetch(url, { headers: { 'x-apisports-key': process.env.API_SPORTS_KEY } })
-  if (!fixturesResponse.ok) return response.status(fixturesResponse.status).json({ error: 'No se pudieron consultar los partidos de la competición.' })
-  const data = await fixturesResponse.json()
+  const data = await fixturesResponse.json().catch(() => ({}))
+  if (!fixturesResponse.ok) {
+    const providerError = data.errors && Object.values(data.errors).join(' ')
+    const error = fixturesResponse.status === 401 || fixturesResponse.status === 403
+      ? 'API-Sports rechazó la consulta. Revisa que la clave sea válida y que tu plan incluya este deporte.'
+      : fixturesResponse.status === 429
+        ? 'API-Sports alcanzó el límite de consultas. Espera unos minutos y vuelve a intentarlo.'
+        : `API-Sports no pudo devolver los partidos (${fixturesResponse.status}).`
+    return response.status(502).json({ error: providerError ? `${error} ${providerError}` : error })
+  }
   if (data.errors && Object.keys(data.errors).length) return response.status(502).json({ error: 'El proveedor no pudo devolver los partidos solicitados.', detail: data.errors })
   response.json({
     league: { key: request.query.league, name: league.name, oddsSportKey: league.oddsSportKey },
