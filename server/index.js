@@ -27,11 +27,12 @@ async function prepareDatabase() {
 }
 
 async function ensureWorkspace(id) {
-  const result = await pool.query('INSERT INTO workspaces (id) VALUES ($1) ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id RETURNING analysis_closed, favorite_teams AS "favoriteTeams"', [id])
-  const count = await pool.query('SELECT COUNT(*)::int AS count FROM matches WHERE workspace_id = $1', [id])
-  if (count.rows[0].count === 0) {
+  const inserted = await pool.query('INSERT INTO workspaces (id) VALUES ($1) ON CONFLICT (id) DO NOTHING RETURNING analysis_closed, favorite_teams AS "favoriteTeams"', [id])
+  if (inserted.rows.length) {
     for (const match of seedMatches) await pool.query('INSERT INTO matches (workspace_id, sport, event, match_time, players, ranking, odds, classification, reason) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)', [id, ...match])
+    return inserted.rows[0]
   }
+  const result = await pool.query('SELECT analysis_closed, favorite_teams AS "favoriteTeams" FROM workspaces WHERE id = $1', [id])
   return result.rows[0]
 }
 
@@ -178,6 +179,11 @@ app.post('/api/workspaces/:workspaceId/matches', async (request, response) => {
   if (!event || !players || !time || !sport || !oddsSportKey) return response.status(400).json({ error: 'Faltan datos obligatorios del partido o su identificador de competición.' })
   const result = await pool.query('INSERT INTO matches (workspace_id, sport, event, odds_sport_key, match_time, players, ranking, odds, classification, reason) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id, sport, event, odds_sport_key AS "oddsSportKey", match_time AS time, players, ranking, odds::float, classification, reason', [request.params.workspaceId, sport, event, oddsSportKey, time, players, ranking, odds, classification, reason])
   response.status(201).json(result.rows[0])
+})
+app.delete('/api/workspaces/:workspaceId/matches', async (request, response) => {
+  await ensureWorkspace(request.params.workspaceId)
+  await pool.query('DELETE FROM matches WHERE workspace_id = $1', [request.params.workspaceId])
+  response.json({ deleted: true })
 })
 app.put('/api/workspaces/:workspaceId/closed', async (request, response) => {
   await ensureWorkspace(request.params.workspaceId)
