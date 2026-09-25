@@ -184,7 +184,7 @@ function App() {
     setAnalysisLoading(true); setLiveAnalysis(null)
     fetch(`${apiUrl}/api/workspaces/${workspaceId}/matches/${active.id}/analysis`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sportKey: sportKey.trim() || undefined }) })
       .then(async (response) => { const data = await response.json(); if (!response.ok) throw new Error(data.error); return data })
-      .then(setLiveAnalysis).catch((error) => setSyncError(error.message || 'No se pudo consultar el análisis real.')).finally(() => setAnalysisLoading(false))
+      .then((data) => setLiveAnalysis({ ...data, books: (Array.isArray(data.books) ? data.books : []).map((book: LiveAnalysis['books'][number]) => ({ ...book, outcomes: Array.isArray(book.outcomes) ? book.outcomes : [] })) })).catch((error) => setSyncError(error.message || 'No se pudo consultar el análisis real.')).finally(() => setAnalysisLoading(false))
   }
   return <main className="app-shell">
     <header className="topbar"><div className="brand"><span className="brand-mark">A</span><span>Atlas <strong>Research</strong></span></div><div className="analysis-status"><span className="status-dot" /> Análisis de hoy <b>{analysisClosed ? 'cerrado' : 'en curso'}</b></div><div className="top-actions"><button className="icon-button" aria-label="Buscar"><Search size={18} /></button><button className="avatar" aria-label="Perfil">MR</button></div></header>
