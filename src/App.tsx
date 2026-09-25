@@ -64,7 +64,7 @@ function App() {
       if (!response.ok) throw new Error('No se pudo cargar la lista')
       return response.json()
     }).then((data) => {
-      const cloudMatches: Match[] = data.matches.map((match: Partial<Match>) => ({
+      const cloudMatches: Match[] = (Array.isArray(data.matches) ? data.matches : []).map((match: Partial<Match>) => ({
         id: Number(match.id),
         sport: String(match.sport ?? 'PENDIENTE'),
         event: String(match.event ?? 'Evento pendiente'),
@@ -77,7 +77,7 @@ function App() {
         reason: String(match.reason ?? 'Datos necesarios para analizar'),
       }))
       setStoredMatches(cloudMatches)
-      setSelected(data.selected.map(Number))
+      setSelected((Array.isArray(data.selected) ? data.selected : []).map(Number))
       setAnalysisClosed(data.analysisClosed)
       setFavoriteTeams(String(data.favoriteTeams ?? ''))
       if (cloudMatches.length) setActiveMatchId(cloudMatches[0].id)
@@ -88,7 +88,7 @@ function App() {
     }).then((data) => {
       setDailyPlan(data.plan)
       setDailyStats(data.stats)
-      setDailyResults(Object.fromEntries(data.entries.map((entry: { matchId: number; result: string }) => [Number(entry.matchId), entry.result])))
+      setDailyResults(Object.fromEntries((Array.isArray(data.entries) ? data.entries : []).map((entry: { matchId: number; result: string }) => [Number(entry.matchId), entry.result])))
     }).catch(() => setSyncError('No se pudo cargar el registro diario.'))
   }, [apiUrl])
   const toggleSelection = (id: number) => {
